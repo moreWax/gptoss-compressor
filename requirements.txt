@@ -1,0 +1,11 @@
+# Compatibility pins for llmcompressor and datasets
+llmcompressor==0.6.0
+transformers==4.55.1
+accelerate>=0.31
+safetensors
+numpy<2.0
+fsspec<=2025.3.0
+# Important: Do NOT pin/install torch here. The Docker image already includes
+# a CUDA-enabled PyTorch (pytorch/pytorch:2.8.0-cuda12.8-cudnn9-devel).
+# Installing torch via pip here can overwrite it with a CPU-only wheel and
+# cause CUDA to be unavailable inside the container.

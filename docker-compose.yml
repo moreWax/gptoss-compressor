@@ -1,0 +1,256 @@
+services:
+  gptoss-compressor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA_ARCH: "${CUDA_ARCH:-8.6}"
+        INSTALL_QQQ: "${INSTALL_QQQ:-true}"
+        TRANSFORMERS_VERSION: "4.38.2"
+    image: gptoss-compressor:cu128
+    container_name: gptoss-compressor
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=${SKIP_STARTUP_COMMANDS:-false}
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+
+  verify:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-verify
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=true
+      - SKIP_STARTUP_COMMANDS=false
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+    command: ["make", "verify"]
+
+  dequantize:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-dequantize
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=false
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+    command: >
+      python compress_gptoss.py dequantize
+      --src openai/gpt-oss-120b
+      --dst /workspace/app/output/gpt-oss-120b-fp16
+      --dtype fp16
+      --device-map sequential
+      --offload-folder ./offload_cache
+
+  dequantize-to-local:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-dequant-to-local
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=${SKIP_STARTUP_COMMANDS:-false}
+      - OUTPUT_DIR=${OUTPUT_DIR:-./fp16}
+      - MAX_GPU_MEMORY=${MAX_GPU_MEMORY:-19GB}
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - "${OUTPUT_DIR:-./fp16}:/workspace/app/output"
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+    entrypoint: []
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        set -Eeuo pipefail
+        echo "🚀 One-Click Dequantization Service Starting..."
+        echo "Output directory: /workspace/app/output (mounted from $OUTPUT_DIR)"
+        mkdir -p /workspace/app/output
+        df -h /workspace/app/output
+
+        if [ "$SKIP_STARTUP_COMMANDS" != "true" ]; then
+          echo "🔍 Running automatic verification..."
+          if [ "$AUTO_TEST_ENV" = "true" ]; then
+            make test-env
+          fi
+          if [ "$AUTO_VERIFY" = "true" ]; then
+            python compress_gptoss.py verify-runtime
+          fi
+        fi
+
+        echo "🔄 Starting dequantization: GPT-OSS-120B MXFP4 → FP16..."
+        echo "   Source: openai/gpt-oss-120b"
+        echo "   Destination: /workspace/app/output/gpt-oss-120b-fp16"
+        echo "   Using sequential device mapping for memory efficiency"
+        echo "   Constraining GPU memory to $MAX_GPU_MEMORY"
+        echo "   This will take significant time but uses minimal GPU memory"
+        echo ""
+
+        python compress_gptoss.py dequantize \
+          --src openai/gpt-oss-120b \
+          --dst /workspace/app/output/gpt-oss-120b-fp16 \
+          --dtype fp16 \
+          --device-map sequential \
+          --offload-folder ./offload_cache \
+          --max-gpu-memory $MAX_GPU_MEMORY
+
+        echo ""
+        echo "✅ Dequantization completed successfully!"
+        echo "📁 Model saved to: /workspace/app/output/gpt-oss-120b-fp16"
+        echo "🎯 Local path: $OUTPUT_DIR/gpt-oss-120b-fp16"
+        echo ""
+        echo "📊 Final directory size:"
+        du -sh /workspace/app/output/gpt-oss-120b-fp16 || echo "Could not measure directory size"
+
+  quantize-w4a8:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-quantize-w4a8
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=false
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+    command: ["make", "w4a8exp_w4a16mw"]
+
+  make:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-make
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=false
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+
+  debug:
+    build:
+      context: .
+      args:
+        TRANSFORMERS_VERSION: "4.38.2"
+    container_name: gptoss-debug
+    image: gptoss-compressor:cu128
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - TORCH_CUDA_ARCH_LIST=8.6
+      - AUTO_VERIFY=${AUTO_VERIFY:-true}
+      - AUTO_TEST_ENV=${AUTO_TEST_ENV:-true}
+      - AUTO_INSTALL_KERNELS=${AUTO_INSTALL_KERNELS:-false}
+      - RUN_MICROBENCH=${RUN_MICROBENCH:-false}
+      - SKIP_STARTUP_COMMANDS=false
+      - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - .:/workspace/app
+      - ./models:/workspace/app/models
+      - /home/xor/offload_cache:/workspace/app/offload_cache
+      - /home/xor/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /workspace/app
+    shm_size: 16g
+    stdin_open: true
+    tty: true
+    command: ["/bin/bash"]

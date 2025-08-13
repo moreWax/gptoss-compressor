@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gptoss-compressor"
+version = "0.1.0"
+description = "Dequantize GPT-OSS MXFP4 and compress via LLM Compressor (GPTQ/AWQ, W4A8, 2:4) with optional CUTLASS kernel installer."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name="Your Name"}]
+dependencies = [
+  "llmcompressor==0.6.0.1",
+  "transformers>=4.44",
+  "accelerate",
+  "safetensors",
+  "torch",
+]
+
+[project.urls]
+Homepage = "https://example.com"
+
+[project.scripts]
+gptoss-compress = "compress_gptoss:main"
